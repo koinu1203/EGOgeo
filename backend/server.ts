@@ -5,6 +5,8 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import pool from './src/config/database';
 import clientesRoutes from './src/routes/clientes.routes';
+import authRoutes from './src/routes/auth.routes';
+import poligonosRoutes from './src/routes/poligonos.routes';
 
 const app = fastify({ logger: true });
 
@@ -14,8 +16,17 @@ app.register(swagger, {
   openapi: {
     info: {
       title: 'API EGOGeo',
-      description: 'API endpoints documentation for customers and geospatial searches',
+      description: 'API endpoints documentation for customers, geospatial searches, and authentication',
       version: '1.0.0',
+    },
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+      },
     },
   },
 });
@@ -24,7 +35,9 @@ app.register(swaggerUi, {
   routePrefix: '/docs',
 });
 
+app.register(authRoutes);
 app.register(clientesRoutes);
+app.register(poligonosRoutes);
 
 app.addHook('onClose', async () => {
   await pool.end();
