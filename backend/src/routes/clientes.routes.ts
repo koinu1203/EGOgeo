@@ -9,6 +9,7 @@ import {
   listClientes,
   updateCliente,
 } from '../controllers/clientes.controller';
+import { verifyJwt } from '../middleware/auth.middleware';
 
 const idParamsSchema = {
   type: 'object',
@@ -56,12 +57,15 @@ const viewportQuerySchema = {
 };
 
 const clientesRoutes: FastifyPluginAsync = async (app) => {
+  app.addHook('preHandler', verifyJwt);
+
   app.get(
     '/clientes',
     {
       schema: {
         tags: ['Customers'],
         summary: 'List all customers',
+        security: [{ bearerAuth: [] }],
       },
     },
     listClientes,
@@ -73,6 +77,7 @@ const clientesRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Customers'],
         summary: 'Find customers near a geographic point',
+        security: [{ bearerAuth: [] }],
         querystring: cercanosQuerySchema,
       },
     },
@@ -85,6 +90,7 @@ const clientesRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Customers'],
         summary: 'Find customers inside a viewport bounding box',
+        security: [{ bearerAuth: [] }],
         querystring: viewportQuerySchema,
       },
     },
@@ -97,6 +103,7 @@ const clientesRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Customers'],
         summary: 'Get one customer by id',
+        security: [{ bearerAuth: [] }],
         params: idParamsSchema,
       },
     },
@@ -109,6 +116,7 @@ const clientesRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Customers'],
         summary: 'Create a customer',
+        security: [{ bearerAuth: [] }],
         body: clienteBodySchema,
       },
     },
@@ -121,6 +129,7 @@ const clientesRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Customers'],
         summary: 'Update a customer',
+        security: [{ bearerAuth: [] }],
         params: idParamsSchema,
         body: clienteBodySchema,
       },
@@ -134,6 +143,7 @@ const clientesRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Customers'],
         summary: 'Delete a customer',
+        security: [{ bearerAuth: [] }],
         params: idParamsSchema,
       },
     },

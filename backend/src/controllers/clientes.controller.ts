@@ -21,8 +21,8 @@ type ClientesViewportQuery = {
   limit?: string;
 };
 
-export async function listClientes() {
-  return ClientesModel.findAll();
+export async function listClientes(request: FastifyRequest) {
+  return ClientesModel.findAll(request.user.id);
 }
 
 export async function listClientesInViewport(
@@ -48,7 +48,7 @@ export async function listClientesInViewport(
     });
   }
 
-  return ClientesModel.findInViewport(lngMin, latMin, lngMax, latMax, limit);
+  return ClientesModel.findInViewport(request.user.id, lngMin, latMin, lngMax, latMax, limit);
 }
 
 export async function listClientesCercanos(
@@ -79,14 +79,14 @@ export async function listClientesCercanos(
     });
   }
 
-  return ClientesModel.findNearby(longitud, latitud, radioMetros, limite);
+  return ClientesModel.findNearby(request.user.id, longitud, latitud, radioMetros, limite);
 }
 
 export async function getClienteById(
   request: FastifyRequest<{ Params: IdParams }>,
   reply: FastifyReply,
 ) {
-  const cliente = await ClientesModel.findById(request.params.id);
+  const cliente = await ClientesModel.findById(request.params.id, request.user.id);
 
   if (!cliente) {
     return reply.code(404).send({ message: 'Customer not found' });
@@ -99,7 +99,7 @@ export async function createCliente(
   request: FastifyRequest<{ Body: ClienteInput }>,
   reply: FastifyReply,
 ) {
-  const cliente = await ClientesModel.create(request.body);
+  const cliente = await ClientesModel.create(request.body, request.user.id);
 
   return reply.code(201).send(cliente);
 }
@@ -108,7 +108,7 @@ export async function updateCliente(
   request: FastifyRequest<{ Params: IdParams; Body: ClienteInput }>,
   reply: FastifyReply,
 ) {
-  const cliente = await ClientesModel.update(request.params.id, request.body);
+  const cliente = await ClientesModel.update(request.params.id, request.body, request.user.id);
 
   if (!cliente) {
     return reply.code(404).send({ message: 'Customer not found' });
@@ -121,7 +121,7 @@ export async function deleteCliente(
   request: FastifyRequest<{ Params: IdParams }>,
   reply: FastifyReply,
 ) {
-  const removed = await ClientesModel.delete(request.params.id);
+  const removed = await ClientesModel.delete(request.params.id, request.user.id);
 
   if (!removed) {
     return reply.code(404).send({ message: 'Customer not found' });

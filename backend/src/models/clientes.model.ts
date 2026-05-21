@@ -49,25 +49,27 @@ const SELECT_CLIENTE_FIELDS = `
 `;
 
 class ClientesModel {
-  static async findAll(): Promise<Cliente[]> {
+  static async findAll(userId: number): Promise<Cliente[]> {
     const result = await pool.query<Cliente>(`
       ${SELECT_CLIENTE_FIELDS}
+      WHERE usuario_id = $1
       ORDER BY nombre ASC
-    `);
+    `, [userId]);
 
     return result.rows;
   }
 
-  static async findById(id: string): Promise<Cliente | null> {
+  static async findById(id: string, userId: number): Promise<Cliente | null> {
     const result = await pool.query<Cliente>(`
       ${SELECT_CLIENTE_FIELDS}
       WHERE cliente_id = $1
-    `, [id]);
+        AND usuario_id = $2
+    `, [id, userId]);
 
     return result.rows[0] ?? null;
   }
 
-  static async create(input: ClienteInput): Promise<Cliente> {
+  static async create(input: ClienteInput, userId: number): Promise<Cliente> {
     const result = await pool.query<Cliente>(
       `
         INSERT INTO clientes_ubicacion (
@@ -76,9 +78,10 @@ class ClientesModel {
           ultima_compra,
           monto_anual,
           moneda,
-          coordenadas
+          coordenadas,
+          usuario_id
         )
-        VALUES ($1, $2, $3, $4, $5, ST_SetSRID(ST_MakePoint($6, $7), 4326))
+        VALUES ($1, $2, $3, $4, $5, ST_SetSRID(ST_MakePoint($6, $7), 4326), $8)
         RETURNING
           cliente_id,
           nombre,
@@ -96,13 +99,14 @@ class ClientesModel {
         input.moneda,
         input.longitud,
         input.latitud,
+        userId,
       ],
     );
 
     return result.rows[0];
   }
 
-  static async update(id: string, input: ClienteInput): Promise<Cliente | null> {
+  static async update(id: string, input: ClienteInput, userId: number): Promise<Cliente | null> {
     const result = await pool.query<Cliente>(
       `
         UPDATE clientes_ubicacion
@@ -114,6 +118,7 @@ class ClientesModel {
           moneda = $5,
           coordenadas = ST_SetSRID(ST_MakePoint($6, $7), 4326)
         WHERE cliente_id = $8
+          AND usuario_id = $9
         RETURNING
           cliente_id,
           nombre,
@@ -132,19 +137,24 @@ class ClientesModel {
         input.longitud,
         input.latitud,
         id,
+        userId,
       ],
     );
 
     return result.rows[0] ?? null;
   }
 
-  static async delete(id: string): Promise<boolean> {
-    const result = await pool.query('DELETE FROM clientes_ubicacion WHERE cliente_id = $1', [id]);
+  static async delete(id: string, userId: number): Promise<boolean> {
+    const result = await pool.query(
+      'DELETE FROM clientes_ubicacion WHERE cliente_id = $1 AND usuario_id = $2',
+      [id, userId],
+    );
 
     return (result.rowCount ?? 0) > 0;
   }
 
   static async findNearby(
+    userId: number,
     longitudCentro: number,
     latitudCentro: number,
     radioMetros: number,
@@ -168,16 +178,18 @@ class ClientesModel {
           ST_MakePoint($1, $2)::geography,
           $3
         )
+          AND usuario_id = $4
         ORDER BY coordenadas <-> ST_SetSRID(ST_MakePoint($1, $2), 4326)
-        LIMIT $4
+        LIMIT $5
       `,
-      [longitudCentro, latitudCentro, radioMetros, limiteFilas],
+      [longitudCentro, latitudCentro, radioMetros, userId, limiteFilas],
     );
 
     return result.rows;
   }
 
   static async findInViewport(
+    userId: number,
     lngMin: number,
     latMin: number,
     lngMax: number,
@@ -193,9 +205,10 @@ class ClientesModel {
           ST_Y(coordenadas) AS latitud
         FROM clientes_ubicacion
         WHERE coordenadas && ST_MakeEnvelope($1, $2, $3, $4, 4326)
-        LIMIT $5
+          AND usuario_id = $5
+        LIMIT $6
       `,
-      [lngMin, latMin, lngMax, latMax, limitRows],
+      [lngMin, latMin, lngMax, latMax, userId, limitRows],
     );
 
     return result.rows;
