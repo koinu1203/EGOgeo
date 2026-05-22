@@ -52,7 +52,7 @@ const viewportQuerySchema = {
     latMin: { type: 'number' },
     lngMax: { type: 'number' },
     latMax: { type: 'number' },
-    limit: { type: 'integer', minimum: 1, maximum: 1000 },
+    limit: { type: 'integer', minimum: 1, maximum: 18000 },
   },
 };
 

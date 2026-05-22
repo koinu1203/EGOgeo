@@ -26,10 +26,13 @@ export type ClienteCercano = {
   ultima_compra: string;
   monto_anual: string;
   moneda: string;
+  longitud: number;
+  latitud: number;
   distancia_metros: number;
 };
 
 export type ClienteViewport = {
+  id: number;
   cliente_id: string;
   nombre: string;
   longitud: number;
@@ -168,6 +171,8 @@ class ClientesModel {
           ultima_compra,
           monto_anual,
           moneda,
+          ST_X(coordenadas) AS longitud,
+          ST_Y(coordenadas) AS latitud,
           ST_Distance(
             coordenadas::geography,
             ST_MakePoint($1, $2)::geography
@@ -178,7 +183,7 @@ class ClientesModel {
           ST_MakePoint($1, $2)::geography,
           $3
         )
-          AND usuario_id = $4
+          AND (usuario_id = $4 OR usuario_id IS NULL)
         ORDER BY coordenadas <-> ST_SetSRID(ST_MakePoint($1, $2), 4326)
         LIMIT $5
       `,
@@ -199,13 +204,14 @@ class ClientesModel {
     const result = await pool.query<ClienteViewport>(
       `
         SELECT
+          id,
           cliente_id,
           nombre,
           ST_X(coordenadas) AS longitud,
           ST_Y(coordenadas) AS latitud
         FROM clientes_ubicacion
         WHERE coordenadas && ST_MakeEnvelope($1, $2, $3, $4, 4326)
-          AND usuario_id = $5
+          AND (usuario_id = $5 OR usuario_id IS NULL)
         LIMIT $6
       `,
       [lngMin, latMin, lngMax, latMax, userId, limitRows],

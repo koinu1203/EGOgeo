@@ -33,8 +33,8 @@ export async function listClientesInViewport(
   const latMin = Number(request.query.latMin);
   const lngMax = Number(request.query.lngMax);
   const latMax = Number(request.query.latMax);
-  const limitRaw = request.query.limit ? Number(request.query.limit) : 1000;
-  const limit = Math.min(Math.max(limitRaw, 1), 1000);
+  const limitRaw = request.query.limit ? Number(request.query.limit) : 18000;
+  const limit = Math.min(Math.max(limitRaw, 1), 18000);
 
   if (
     Number.isNaN(lngMin)

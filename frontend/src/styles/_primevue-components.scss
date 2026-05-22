@@ -1,0 +1,40 @@
+.sidebar-toggle-btn {
+  --sidebar-toggle-bg: #2abc84;
+  --sidebar-toggle-bg-hover: #24ab77;
+  --sidebar-toggle-bg-active: #1f9367;
+  --sidebar-toggle-icon: #f4f6f9;
+  --sidebar-toggle-shadow: 0 6px 14px rgba(15, 30, 70, 0.18);
+}
+
+.sidebar-toggle-btn.p-button {
+  background: var(--sidebar-toggle-bg);
+  border-color: transparent;
+  color: var(--sidebar-toggle-icon);
+  box-shadow: var(--sidebar-toggle-shadow);
+}
+
+.sidebar-toggle-btn.p-button:not(:disabled):hover {
+  background: var(--sidebar-toggle-bg-hover);
+  border-color: transparent;
+}
+
+.sidebar-toggle-btn.p-button:not(:disabled):active {
+  background: var(--sidebar-toggle-bg-active);
+  border-color: transparent;
+}
+
+.sidebar-toggle-btn.p-button .p-button-icon {
+  color: var(--sidebar-toggle-icon);
+  font-size: 8px;
+  line-height: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sidebar-toggle-btn {
+    --sidebar-toggle-bg: #249a6d;
+    --sidebar-toggle-bg-hover: #1f845e;
+    --sidebar-toggle-bg-active: #1a6e4f;
+    --sidebar-toggle-icon: #eaf2ff;
+    --sidebar-toggle-shadow: 0 6px 14px rgba(0, 0, 0, 0.28);
+  }
+}

@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 
-import { login, register } from '../controllers/auth.controller';
+import { login, logout, register } from '../controllers/auth.controller';
+import { verifyJwt } from '../middleware/auth.middleware';
 
 const authBodySchema = {
   type: 'object',
@@ -34,6 +35,19 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     login,
+  );
+
+  app.post(
+    '/auth/logout',
+    {
+      preHandler: verifyJwt,
+      schema: {
+        tags: ['Auth'],
+        summary: 'Logout current authenticated session',
+        security: [{ bearerAuth: [] }],
+      },
+    },
+    logout,
   );
 };
 

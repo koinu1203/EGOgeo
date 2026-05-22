@@ -89,3 +89,9 @@ export async function login(
     },
   });
 }
+
+export async function logout(request: FastifyRequest, reply: FastifyReply) {
+  return reply.send({
+    message: `Session closed for ${request.user.email ?? 'user'}.`,
+  });
+}

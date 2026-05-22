@@ -1,6 +1,11 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
 
-import PoligonosModel, { PoligonoInput, PolygonCoordinates } from '../models/poligonos.model';
+import PoligonosModel, {
+  BulkPoligonoInput,
+  PoligonoInput,
+  PuntoDentroPoligono,
+  PolygonCoordinates,
+} from '../models/poligonos.model';
 
 type IdParams = {
   id: string;
@@ -48,6 +53,59 @@ function validatePoligonoInput(input: PoligonoInput, reply: FastifyReply): boole
   return true;
 }
 
+type BulkPoligonoRequestItem = {
+  nombre?: string;
+  areaCoordinates: PolygonCoordinates;
+  colorHex?: string;
+  estiloPunto?: string;
+  vendedorId: number;
+  clienteIds: number[];
+};
+
+type BulkPoligonosBody = {
+  items: BulkPoligonoRequestItem[];
+};
+
+function validateBulkItem(item: BulkPoligonoRequestItem, index: number, reply: FastifyReply): BulkPoligonoInput | null {
+  if (!item.areaCoordinates || !isValidPolygonCoordinates(item.areaCoordinates)) {
+    reply.code(400).send({ message: `Invalid polygon coordinates at item ${index}.` });
+    return null;
+  }
+
+  if (!Number.isInteger(item.vendedorId) || item.vendedorId <= 0) {
+    reply.code(400).send({ message: `vendedorId must be a positive integer at item ${index}.` });
+    return null;
+  }
+
+  if (item.colorHex && !isValidHexColor(item.colorHex)) {
+    reply.code(400).send({ message: `colorHex must follow #RRGGBB format at item ${index}.` });
+    return null;
+  }
+
+  if (!Array.isArray(item.clienteIds) || item.clienteIds.length === 0) {
+    reply.code(400).send({ message: `clienteIds must contain at least one id at item ${index}.` });
+    return null;
+  }
+
+  const normalizedClienteIds = [...new Set(item.clienteIds.map((id) => Number(id)))].filter(
+    (id) => Number.isInteger(id) && id > 0,
+  );
+
+  if (normalizedClienteIds.length === 0) {
+    reply.code(400).send({ message: `clienteIds must contain positive integers at item ${index}.` });
+    return null;
+  }
+
+  return {
+    nombre: item.nombre,
+    areaCoordinates: item.areaCoordinates,
+    colorHex: item.colorHex,
+    estiloPunto: item.estiloPunto,
+    vendedorId: item.vendedorId,
+    clienteIds: normalizedClienteIds,
+  };
+}
+
 export async function listPoligonos(request: FastifyRequest) {
   return PoligonosModel.findAll(request.user.id);
 }
@@ -63,6 +121,28 @@ export async function getPoligonoById(
   }
 
   return poligono;
+}
+
+export async function listPointsInsidePoligono(
+  request: FastifyRequest<{ Params: IdParams }>,
+  reply: FastifyReply,
+) {
+  const poligono = await PoligonosModel.findById(request.params.id, request.user.id);
+
+  if (!poligono) {
+    return reply.code(404).send({ message: 'Polygon not found' });
+  }
+
+  const points: PuntoDentroPoligono[] = await PoligonosModel.listPointsInsidePolygon(
+    request.params.id,
+    request.user.id,
+  );
+
+  return {
+    poligonoId: poligono.id,
+    total: points.length,
+    points,
+  };
 }
 
 export async function createPoligono(
@@ -106,4 +186,45 @@ export async function deletePoligono(
   }
 
   return reply.code(204).send();
+}
+
+export async function createPoligonosBulk(
+  request: FastifyRequest<{ Body: BulkPoligonosBody }>,
+  reply: FastifyReply,
+) {
+  const items = Array.isArray(request.body?.items) ? request.body.items : [];
+
+  if (items.length === 0) {
+    return reply.code(400).send({ message: 'items must contain at least one polygon.' });
+  }
+
+  const normalizedItems: BulkPoligonoInput[] = [];
+
+  for (let index = 0; index < items.length; index += 1) {
+    const normalized = validateBulkItem(items[index], index, reply);
+
+    if (!normalized) {
+      return;
+    }
+
+    normalizedItems.push(normalized);
+  }
+
+  try {
+    const result = await PoligonosModel.createManyWithAssignments(normalizedItems, request.user.id);
+
+    return reply.code(201).send(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to process bulk polygon creation.';
+
+    if (message.startsWith('Missing vendors:')) {
+      return reply.code(404).send({ message });
+    }
+
+    if (message.startsWith('Missing customers:')) {
+      return reply.code(404).send({ message });
+    }
+
+    throw error;
+  }
 }

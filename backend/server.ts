@@ -1,16 +1,39 @@
 import 'dotenv/config';
 
 import fastify from 'fastify';
+import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import pool from './src/config/database';
 import clientesRoutes from './src/routes/clientes.routes';
 import authRoutes from './src/routes/auth.routes';
 import poligonosRoutes from './src/routes/poligonos.routes';
+import vendedoresRoutes from './src/routes/vendedores.routes';
+import asignacionesVendedoresPoligonosRoutes from './src/routes/asignaciones-vendedores-poligonos.routes';
 
 const app = fastify({ logger: true });
 
 app.decorate('db', pool);
+
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
+
+app.register(cors, {
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    const isAllowed = allowedOrigins.includes(origin);
+
+    callback(null, isAllowed);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+});
 
 app.register(swagger, {
   openapi: {
@@ -38,6 +61,8 @@ app.register(swaggerUi, {
 app.register(authRoutes);
 app.register(clientesRoutes);
 app.register(poligonosRoutes);
+app.register(vendedoresRoutes);
+app.register(asignacionesVendedoresPoligonosRoutes);
 
 app.addHook('onClose', async () => {
   await pool.end();
