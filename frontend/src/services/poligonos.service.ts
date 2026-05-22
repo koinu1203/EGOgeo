@@ -44,6 +44,31 @@ export interface CreatePoligonosBulkResponse {
   clientAssignmentsUpserted: number
 }
 
+export interface PuntoDentroPoligonoItem {
+  id: number
+  cliente_id: string
+  nombre: string
+  moneda: string
+  importe_compras: number
+  monto_anual: number
+  longitud: number
+  latitud: number
+}
+
+export interface PoligonoPuntosResponse {
+  poligonoId: number
+  total: number
+  totalMontoAnual: number
+  points: PuntoDentroPoligonoItem[]
+}
+
+export interface PoligonoDetalleResponse {
+  poligono: PoligonoItem
+  total: number
+  totalMontoAnual: number
+  points: PuntoDentroPoligonoItem[]
+}
+
 const poligonosApi = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
   headers: {
@@ -80,6 +105,24 @@ export const createPoligonosBulk = async (
   payload: CreatePoligonosBulkPayload,
 ): Promise<CreatePoligonosBulkResponse> => {
   const { data } = await poligonosApi.post<CreatePoligonosBulkResponse>('/poligonos/bulk', payload)
+  return data
+}
+
+export const getPoligonoPuntos = async (id: number): Promise<PoligonoPuntosResponse> => {
+  const { data } = await poligonosApi.get<PoligonoPuntosResponse>(`/poligonos/${id}/puntos`)
+  return data
+}
+
+export const getPoligonoDetalle = async (id: number): Promise<PoligonoDetalleResponse> => {
+  const { data } = await poligonosApi.get<PoligonoDetalleResponse>(`/poligonos/${id}/detalle`)
+  return data
+}
+
+export const updatePoligono = async (
+  id: number,
+  payload: CreatePoligonoPayload,
+): Promise<PoligonoItem> => {
+  const { data } = await poligonosApi.put<PoligonoItem>(`/poligonos/${id}`, payload)
   return data
 }
 

@@ -4,6 +4,7 @@ import {
   createPoligonosBulk,
   createPoligono,
   deletePoligono,
+  getPoligonoDetalle,
   getPoligonoById,
   listPointsInsidePoligono,
   listPoligonos,
@@ -122,6 +123,19 @@ const poligonosRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     listPointsInsidePoligono,
+  );
+
+  app.get(
+    '/poligonos/:id/detalle',
+    {
+      schema: {
+        tags: ['Polygons'],
+        summary: 'Get polygon details and points inside for the authenticated user',
+        security: [{ bearerAuth: [] }],
+        params: idParamsSchema,
+      },
+    },
+    getPoligonoDetalle,
   );
 
   app.post(

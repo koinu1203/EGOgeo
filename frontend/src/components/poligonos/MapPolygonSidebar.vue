@@ -22,6 +22,7 @@ const props = defineProps<{
   pointsPerVendor: number
   canGeneratePolygons: boolean
   isGeneratingPolygons: boolean
+  selectedPoligonoId: number | null
   selectedColor: string
 }>()
 
@@ -37,6 +38,7 @@ const emit = defineEmits<{
   (event: 'update:selected-vendedores', value: VendedorItem[]): void
   (event: 'update:points-per-vendor', value: number): void
   (event: 'generate-polygons'): void
+  (event: 'select-poligono', id: number): void
 }>()
 
 const pointsPerVendorProxy = computed({
@@ -72,8 +74,12 @@ const updateAccordionPanels = (value: string | string[] | null | undefined) => {
   }
 }
 
-const selectAllVendedores = () => {
-  emit('update:selected-vendedores', [...props.savedVendedores])
+const collapseVendedoresAccordion = () => {
+  if (!props.showVendedoresPanel) {
+    return
+  }
+
+  emit('toggle-vendors-list')
 }
 
 const handleGeneratePolygons = () => {
@@ -123,8 +129,8 @@ const handleGeneratePolygons = () => {
                 label="Select"
                 size="small"
                 text
-                :disabled="savedVendedores.length === 0 || selectedVendedores.length === 0 || selectedVendedores.length === savedVendedores.length"
-                @click.stop="selectAllVendedores"
+                :disabled="selectedVendedores.length === 0"
+                @click.stop.prevent="collapseVendedoresAccordion"
               />
             </div>
           </AccordionHeader>
@@ -156,7 +162,10 @@ const handleGeneratePolygons = () => {
         </AccordionPanel>
       </Accordion>
 
-      <div class="flex flex-col gap-2">
+      <div
+        class="flex flex-col gap-2"
+        :title="!canGeneratePolygons && !isGeneratingPolygons ? 'You need at least 3 points and one vendor to generate polygons' : undefined"
+      >
         <Button
           label="Generate polygons"
           icon="pi pi-sparkles"
@@ -201,8 +210,10 @@ const handleGeneratePolygons = () => {
               <PoligonosFloatingPanel
                 :loading="isLoadingPolygons"
                 :deleting-id="deletingPoligonoId"
+                :selected-id="selectedPoligonoId"
                 :poligonos="savedPoligonos"
                 class="min-w-0 w-full max-w-full"
+                @select="(id) => emit('select-poligono', id)"
                 @delete="(id) => emit('delete', id)"
               />
             </div>
@@ -256,19 +267,37 @@ const handleGeneratePolygons = () => {
 .generate-polygons-button {
   width: 100%;
   justify-content: center;
-  border: 1px solid rgba(180, 83, 9, 0.28) !important;
-  background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%) !important;
+  border: 1px solid rgba(180, 83, 9, 0.34) !important;
+  background:
+    linear-gradient(145deg, rgba(255, 251, 235, 0.16) 0%, rgba(255, 251, 235, 0) 38%),
+    linear-gradient(135deg, #f59e0b 0%, #ea580c 100%) !important;
   color: #fff7ed !important;
-  box-shadow: 0 12px 24px rgba(234, 88, 12, 0.2);
+  box-shadow:
+    0 12px 24px rgba(234, 88, 12, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  text-shadow: 0 1px 0 rgba(124, 45, 18, 0.3);
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease;
 }
 
 .generate-polygons-button:hover:not(:disabled) {
-  border-color: rgba(154, 52, 18, 0.4) !important;
-  background: linear-gradient(135deg, #fbbf24 0%, #f97316 100%) !important;
+  border-color: rgba(154, 52, 18, 0.48) !important;
+  background:
+    linear-gradient(145deg, rgba(255, 251, 235, 0.22) 0%, rgba(255, 251, 235, 0) 40%),
+    linear-gradient(135deg, #fbbf24 0%, #f97316 100%) !important;
+  box-shadow:
+    0 14px 30px rgba(234, 88, 12, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transform: translateY(-1px);
 }
 
 .generate-polygons-button:disabled {
-  opacity: 0.65;
+  opacity: 0.58;
+  border-color: rgba(180, 83, 9, 0.22) !important;
   box-shadow: none;
+  transform: none;
 }
 </style>

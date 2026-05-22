@@ -138,9 +138,37 @@ export async function listPointsInsidePoligono(
     request.user.id,
   );
 
+  const totalMontoAnual = points.reduce((sum, item) => sum + Number(item.monto_anual || 0), 0);
+
   return {
     poligonoId: poligono.id,
     total: points.length,
+    totalMontoAnual,
+    points,
+  };
+}
+
+export async function getPoligonoDetalle(
+  request: FastifyRequest<{ Params: IdParams }>,
+  reply: FastifyReply,
+) {
+  const poligono = await PoligonosModel.findById(request.params.id, request.user.id);
+
+  if (!poligono) {
+    return reply.code(404).send({ message: 'Polygon not found' });
+  }
+
+  const points: PuntoDentroPoligono[] = await PoligonosModel.listPointsInsidePolygon(
+    request.params.id,
+    request.user.id,
+  );
+
+  const totalMontoAnual = points.reduce((sum, item) => sum + Number(item.monto_anual || 0), 0);
+
+  return {
+    poligono,
+    total: points.length,
+    totalMontoAnual,
     points,
   };
 }

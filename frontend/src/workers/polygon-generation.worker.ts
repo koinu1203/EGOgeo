@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { bboxPolygon, convex, featureCollection, point } from '@turf/turf'
+import { bboxPolygon, booleanIntersects, convex, featureCollection, point, polygon } from '@turf/turf'
 
 type VendorSelection = {
   id: number
@@ -18,6 +18,10 @@ type PolygonGenerationRequest = {
   version: number
   pointsPerVendor: number
   selectedVendors: VendorSelection[]
+  existingPolygons: Array<{
+    id: number
+    coordinates: number[][][]
+  }>
   points: InputPoint[]
 }
 
@@ -50,6 +54,69 @@ const VENDOR_COLORS = [
 const toFiniteNumber = (value: unknown): number | null => {
   const parsed = typeof value === 'string' ? Number(value) : value
   return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : null
+}
+
+const distanceSquared = (a: InputPoint, b: InputPoint) => {
+  const dx = a.lng - b.lng
+  const dy = a.lat - b.lat
+  return dx * dx + dy * dy
+}
+
+const normalizeRing = (ring: number[][]): number[][] => {
+  if (ring.length < 3) {
+    return ring
+  }
+
+  const first = ring[0]
+  const last = ring[ring.length - 1]
+
+  if (first[0] === last[0] && first[1] === last[1]) {
+    return ring
+  }
+
+  return [...ring, first]
+}
+
+const buildPolygonGeometry = (chunk: InputPoint[]): number[][][] => {
+  const fc = featureCollection(chunk.map((item) => point([item.lng, item.lat])))
+  const convexFeature = convex(fc)
+  const coordinates = convexFeature?.geometry?.coordinates as number[][][] | undefined
+
+  if (coordinates && coordinates[0]?.length >= 4) {
+    return [normalizeRing(coordinates[0])]
+  }
+
+  return buildFallbackBBoxCoordinates(chunk)
+}
+
+const hasOverlap = (
+  candidateCoordinates: number[][][],
+  existingCoordinates: number[][][][],
+) => {
+  try {
+    const candidate = polygon(candidateCoordinates)
+
+    for (const coordinates of existingCoordinates) {
+      const existing = polygon(coordinates)
+      if (booleanIntersects(candidate, existing)) {
+        return true
+      }
+    }
+
+    return false
+  } catch {
+    // If geometry validation fails, keep behavior safe and mark as overlap.
+    return true
+  }
+}
+
+const getNearestChunk = (
+  seed: InputPoint,
+  pool: InputPoint[],
+  pointsPerVendor: number,
+): InputPoint[] => {
+  const sorted = [...pool].sort((a, b) => distanceSquared(seed, a) - distanceSquared(seed, b))
+  return sorted.slice(0, pointsPerVendor)
 }
 
 const buildFallbackBBoxCoordinates = (chunk: InputPoint[]): number[][][] => {
@@ -86,6 +153,10 @@ self.onmessage = (event: MessageEvent<PolygonGenerationRequest>) => {
     ? event.data.selectedVendors
     : []
 
+  const existingPolygons = Array.isArray(event.data?.existingPolygons)
+    ? event.data.existingPolygons
+    : []
+
   const rawPoints = Array.isArray(event.data?.points) ? event.data.points : []
   const points = rawPoints
     .map((item) => ({
@@ -108,30 +179,87 @@ self.onmessage = (event: MessageEvent<PolygonGenerationRequest>) => {
 
   const polygons: GeneratedPolygon[] = []
   const skippedVendorIds: number[] = []
+  const usedPointIds = new Set<string>()
+  const createdCoordinates: number[][][][] = existingPolygons
+    .map((item) => item.coordinates)
+    .filter((coordinates) => Array.isArray(coordinates) && coordinates[0]?.length >= 4)
+  const minimumPolygonPoints = 3
 
   selectedVendors.forEach((vendor, vendorIndex) => {
-    const start = vendorIndex * pointsPerVendor
-    const end = start + pointsPerVendor
-    const chunk = points.slice(start, end)
+    const availableUniquePoints = points.filter((item) => !usedPointIds.has(item.id))
+    const canUseOnlyUniquePoints = availableUniquePoints.length >= pointsPerVendor
+    const candidatePool = canUseOnlyUniquePoints ? availableUniquePoints : points
 
-    if (chunk.length < 3) {
+    if (candidatePool.length < minimumPolygonPoints) {
       skippedVendorIds.push(vendor.id)
       return
     }
 
-    const fc = featureCollection(chunk.map((item) => point([item.lng, item.lat])))
-    const convexFeature = convex(fc)
-    const coordinates = convexFeature?.geometry?.coordinates as number[][][] | undefined
+    const uniqueSeedCandidates = canUseOnlyUniquePoints
+      ? candidatePool
+      : candidatePool.filter((item) => !usedPointIds.has(item.id))
+
+    const seedCandidates = uniqueSeedCandidates.length > 0 ? uniqueSeedCandidates : candidatePool
+
+    let selectedChunk: InputPoint[] | null = null
+    let selectedCoordinates: number[][][] | null = null
+
+    for (const seed of seedCandidates) {
+      const nextChunk = getNearestChunk(seed, candidatePool, pointsPerVendor)
+      if (nextChunk.length < minimumPolygonPoints) {
+        continue
+      }
+
+      const nextCoordinates = buildPolygonGeometry(nextChunk)
+
+      // Only enforce non-overlap while we still have enough unique points.
+      if (canUseOnlyUniquePoints && hasOverlap(nextCoordinates, createdCoordinates)) {
+        continue
+      }
+
+      selectedChunk = nextChunk
+      selectedCoordinates = nextCoordinates
+      break
+    }
+
+    if (!selectedChunk || !selectedCoordinates) {
+      if (canUseOnlyUniquePoints) {
+        // Unique points are still enough, so we skip instead of creating overlapping polygons.
+        skippedVendorIds.push(vendor.id)
+        return
+      }
+
+      // Fallback: allow overlap only when unique points are insufficient.
+      const fallbackChunk = getNearestChunk(candidatePool[0], candidatePool, pointsPerVendor)
+      if (fallbackChunk.length < minimumPolygonPoints) {
+        skippedVendorIds.push(vendor.id)
+        return
+      }
+
+      selectedChunk = fallbackChunk
+      selectedCoordinates = buildPolygonGeometry(fallbackChunk)
+    }
+
+    if (selectedChunk.length < minimumPolygonPoints) {
+      skippedVendorIds.push(vendor.id)
+      return
+    }
+
+    selectedChunk.forEach((item) => {
+      if (!usedPointIds.has(item.id)) {
+        usedPointIds.add(item.id)
+      }
+    })
+
+    createdCoordinates.push(selectedCoordinates)
 
     polygons.push({
       vendorId: vendor.id,
       vendorCode: vendor.codigo,
       vendorName: vendor.nombre,
       colorHex: VENDOR_COLORS[vendorIndex % VENDOR_COLORS.length],
-      coordinates: coordinates && coordinates[0]?.length >= 4
-        ? coordinates
-        : buildFallbackBBoxCoordinates(chunk),
-      pointIds: chunk.map((item) => item.id),
+      coordinates: selectedCoordinates,
+      pointIds: selectedChunk.map((item) => item.id),
     })
   })
 

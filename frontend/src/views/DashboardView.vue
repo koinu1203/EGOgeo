@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer'
 import { booleanPointInPolygon, point as turfPoint, polygon as turfPolygon } from '@turf/turf'
 
@@ -13,7 +14,11 @@ import {
   type PoligonoItem,
 } from '../services/poligonos.service'
 import { listVendedores, type VendedorItem } from '../services/vendedores.service'
+import FloatingPlaceSearch from '../components/map/FloatingPlaceSearch.vue'
 import MapPolygonSidebar from '../components/poligonos/MapPolygonSidebar.vue'
+import PoligonoDetailsSidebar from '../components/poligonos/PoligonoDetailsSidebar.vue'
+import { useAuthStore } from '../stores/auth.store'
+import { useGlobalLoadingStore } from '../stores/global-loading.store'
 import {
   CLUSTER_ICON_COLOR,
   CLUSTER_RADIUS_PX,
@@ -59,6 +64,10 @@ type PolygonGenerationWorkerRequest = {
     codigo: string
     nombre: string
   }>
+  existingPolygons: Array<{
+    id: number
+    coordinates: number[][][]
+  }>
   points: Array<{
     id: string
     lat: number
@@ -84,8 +93,17 @@ type ClienteWithOptionalCoords = ClienteViewportItem & {
   latitud?: number | string
 }
 
+type PlaceSelection = {
+  lat: number
+  lng: number
+  address: string
+}
+
 const mapLoadStatus = ref<MapLoadStatus>('loading')
 const mapStatusMessage = ref('Loading Google Maps...')
+const globalLoadingStore = useGlobalLoadingStore()
+const authStore = useAuthStore()
+const { isAuthenticated } = storeToRefs(authStore)
 
 const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim()
 const googleMapsMapId = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID?.trim()
@@ -98,7 +116,12 @@ const mapInstance = shallowRef<GoogleMapsMapInstance | null>(null)
 const markerInstances = shallowRef<GoogleMapsMarkerInstance[]>([])
 const markerClustererInstance = shallowRef<MarkerClusterer | null>(null)
 const markerWorker = shallowRef<Worker | null>(null)
-const polygonOverlays = shallowRef<Array<{ setMap: (map: unknown | null) => void }>>([])
+type MapPolygonOverlay = {
+  setMap: (map: unknown) => void
+  addListener: (eventName: string, handler: () => void) => GoogleMapsMapsEventListener
+}
+
+const polygonOverlays = shallowRef<MapPolygonOverlay[]>([])
 const draftPolygonOverlay = shallowRef<{ setMap: (map: unknown | null) => void } | null>(null)
 const mapInfoWindow = shallowRef<{
   setContent: (content: string) => void
@@ -131,13 +154,16 @@ const selectedVendedores = ref<VendedorItem[]>([])
 const showPoligonosPanel = ref(false)
 const showVendedoresPanel = ref(false)
 const deletingPoligonoId = ref<number | null>(null)
+const selectedPoligonoId = ref<number | null>(null)
 const polygonDraftPoints = ref<DraftPoint[]>([])
 const savedPoligonos = ref<PoligonoItem[]>([])
 const generatedPoligonos = ref<PoligonoItem[]>([])
 const savedVendedores = ref<VendedorItem[]>([])
+const hasResolvedInitialMapLoading = ref(false)
+const isPostLoginPointsLoading = ref(false)
 
 const shouldShowStatusBanner = computed(
-  () => mapLoadStatus.value !== 'ready' || showGoogleMapsSuccessBanner,
+  () => mapLoadStatus.value !== 'ready' || showGoogleMapsSuccessBanner || !isAuthenticated.value,
 )
 
 const canSavePolygon = computed(
@@ -148,6 +174,12 @@ const activePoligonosForMap = computed(
   () => (generatedPoligonos.value.length > 0 ? generatedPoligonos.value : savedPoligonos.value),
 )
 
+const selectedPoligono = computed(() => (
+  selectedPoligonoId.value === null
+    ? null
+    : savedPoligonos.value.find((item) => item.id === selectedPoligonoId.value) ?? null
+))
+
 const canGeneratePolygons = computed(() => (
   selectedVendedores.value.length > 0
   && Number.isFinite(pointsPerVendor.value)
@@ -156,6 +188,7 @@ const canGeneratePolygons = computed(() => (
 ))
 
 const isMapDrawingCursor = computed(() => isDrawingPolygon.value)
+const showAuthRequiredNotice = computed(() => mapLoadStatus.value === 'ready' && !isAuthenticated.value)
 
 const openMapTooltip = (anchor: unknown, htmlContent: string) => {
   if (!mapInfoWindow.value || !mapInstance.value) {
@@ -171,6 +204,26 @@ const openMapTooltip = (anchor: unknown, htmlContent: string) => {
 
 const closeMapTooltip = () => {
   mapInfoWindow.value?.close()
+}
+
+const startPostLoginPointsLoading = () => {
+  isPostLoginPointsLoading.value = true
+  globalLoadingStore.begin({
+    title: 'Loading data',
+    message: 'Loading points after login...',
+    progress: 20,
+  })
+}
+
+const finishPostLoginPointsLoading = (message: string) => {
+  if (!isPostLoginPointsLoading.value) {
+    return
+  }
+
+  globalLoadingStore.setProgress(100)
+  globalLoadingStore.setMessage(message)
+  globalLoadingStore.finish()
+  isPostLoginPointsLoading.value = false
 }
 
 const clearDraftPointMarkers = () => {
@@ -301,7 +354,7 @@ const renderSavedPoligonos = () => {
         return null
       }
 
-      return new googleMaps.Polygon({
+      const overlay = new googleMaps.Polygon({
         map: mapInstance.value,
         paths: ring.map(([lng, lat]) => ({ lat, lng })),
         strokeColor: poligono.color_hex || DEFAULT_POLYGON_COLOR,
@@ -310,8 +363,19 @@ const renderSavedPoligonos = () => {
         fillColor: poligono.color_hex || DEFAULT_POLYGON_COLOR,
         fillOpacity: 0.14,
       })
+
+      overlay.addListener('click', () => {
+        if (poligono.id <= 0) {
+          return
+        }
+
+        selectedPoligonoId.value = poligono.id
+        showPoligonosPanel.value = true
+      })
+
+      return overlay
     })
-    .filter((overlay): overlay is { setMap: (map: unknown | null) => void } => overlay !== null)
+    .filter((overlay): overlay is MapPolygonOverlay => overlay !== null)
 
   // Re-classify markers when the polygon set changes.
   runColoringWorker()
@@ -344,12 +408,32 @@ const loadPoligonos = async () => {
 
   try {
     savedPoligonos.value = await listPoligonos()
+
+    if (
+      selectedPoligonoId.value !== null
+      && !savedPoligonos.value.some((item) => item.id === selectedPoligonoId.value)
+    ) {
+      selectedPoligonoId.value = null
+    }
+
     renderSavedPoligonos()
   } catch {
     savedPoligonos.value = []
+    selectedPoligonoId.value = null
   } finally {
     isLoadingPolygons.value = false
   }
+}
+
+const resolveInitialMapLoading = (message = 'Map and points loaded successfully.') => {
+  if (hasResolvedInitialMapLoading.value) {
+    return
+  }
+
+  hasResolvedInitialMapLoading.value = true
+  globalLoadingStore.setProgress(100)
+  globalLoadingStore.setMessage(message)
+  globalLoadingStore.finish()
 }
 
 const loadVendedores = async () => {
@@ -397,10 +481,17 @@ const initPolygonGenerationWorker = () => {
     renderSavedPoligonos()
     showPoligonosPanel.value = true
 
+    globalLoadingStore.setProgress(62)
+    globalLoadingStore.setMessage('Saving generated polygons...')
+
     try {
       const persisted = await persistGeneratedPolygons(event.data.polygons)
       generatedPoligonos.value = []
+      globalLoadingStore.setProgress(86)
+      globalLoadingStore.setMessage('Refreshing polygons on map...')
       await loadPoligonos()
+      globalLoadingStore.setProgress(100)
+      globalLoadingStore.finish()
 
       if (event.data.skippedVendorIds.length > 0) {
         mapStatusMessage.value = `Saved ${persisted.createdPolygons} polygons with ${persisted.clientAssignmentsUpserted} customer assignments. Some vendors were skipped due to insufficient points.`
@@ -410,6 +501,8 @@ const initPolygonGenerationWorker = () => {
       mapStatusMessage.value = `Saved ${persisted.createdPolygons} polygons with ${persisted.clientAssignmentsUpserted} customer assignments.`
     } catch {
       mapStatusMessage.value = 'Polygons were generated on screen but could not be saved in backend.'
+      globalLoadingStore.setProgress(100)
+      globalLoadingStore.finish()
     } finally {
       isGeneratingPolygons.value = false
     }
@@ -429,6 +522,19 @@ const generatePolygonsFromSelection = () => {
   showVendedoresPanel.value = false
   showPoligonosPanel.value = true
   isGeneratingPolygons.value = true
+  globalLoadingStore.begin({
+    title: 'Generating polygons',
+    message: 'Assigning points to vendors...',
+    progress: 22,
+  })
+
+  const plainExistingPolygons = savedPoligonos.value
+    .filter((item) => item.area?.coordinates?.[0] && item.area.coordinates[0].length >= 4)
+    .map((item) => ({
+      id: item.id,
+      // postMessage cannot clone Vue Proxy objects.
+      coordinates: JSON.parse(JSON.stringify(item.area.coordinates)) as number[][][],
+    }))
 
   const request: PolygonGenerationWorkerRequest = {
     version: ++polygonGenerationVersion.value,
@@ -438,6 +544,7 @@ const generatePolygonsFromSelection = () => {
       codigo: vendor.codigo,
       nombre: vendor.nombre,
     })),
+    existingPolygons: plainExistingPolygons,
     points: viewportClientes.value.map((cliente) => ({
       id: String(cliente.id),
       lat: cliente.latitud,
@@ -505,10 +612,55 @@ const removePoligonoById = async (id: number) => {
   try {
     await deletePoligono(id)
     savedPoligonos.value = savedPoligonos.value.filter((item) => item.id !== id)
+
+    if (selectedPoligonoId.value === id) {
+      selectedPoligonoId.value = null
+    }
+
     renderSavedPoligonos()
   } finally {
     deletingPoligonoId.value = null
   }
+}
+
+const selectPoligono = (id: number) => {
+  selectedPoligonoId.value = id
+}
+
+const closePoligonoDetails = () => {
+  selectedPoligonoId.value = null
+}
+
+const handlePlaceSelected = (selection: PlaceSelection) => {
+  const currentMap = mapInstance.value
+  if (!currentMap) {
+    return
+  }
+
+  currentMap.panTo?.({ lat: selection.lat, lng: selection.lng })
+
+  // Approximate a 3 km viewport around the selected place.
+  const radiusKm = 3
+  const latDelta = radiusKm / 111.32
+  const lngDelta = radiusKm / (111.32 * Math.max(Math.cos((selection.lat * Math.PI) / 180), 0.2))
+
+  currentMap.fitBounds?.({
+    north: selection.lat + latDelta,
+    south: selection.lat - latDelta,
+    east: selection.lng + lngDelta,
+    west: selection.lng - lngDelta,
+  })
+
+  mapStatusMessage.value = `Location selected: ${selection.address}`
+  scheduleViewportFetch()
+}
+
+const handlePoligonoUpdated = (updated: PoligonoItem) => {
+  savedPoligonos.value = savedPoligonos.value.map((item) => (
+    item.id === updated.id ? updated : item
+  ))
+
+  renderSavedPoligonos()
 }
 
 const formatClusterTooltip = (count: number, markers: unknown[] | undefined) => {
@@ -611,7 +763,7 @@ const loadGoogleMapsScript = async () => {
   script.id = GOOGLE_MAPS_SCRIPT_ID
   script.async = true
   script.defer = true
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(googleMapsApiKey)}&v=weekly`
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(googleMapsApiKey)}&v=weekly&libraries=places`
 
   const loaded = await new Promise<boolean>((resolve) => {
     script.onload = () => resolve(true)
@@ -897,11 +1049,28 @@ const initializeMarkerWorker = () => {
     }
 
     renderMarkers(event.data.markers)
+
+    if (!hasResolvedInitialMapLoading.value) {
+      resolveInitialMapLoading(
+        event.data.markers.length > 0
+          ? 'Map and points loaded successfully.'
+          : 'Map loaded. No points found in this area.',
+      )
+    }
+
+    if (isPostLoginPointsLoading.value) {
+      finishPostLoginPointsLoading(
+        event.data.markers.length > 0
+          ? 'Points loaded successfully.'
+          : 'No points found in this area.',
+      )
+    }
   }
 
   markerWorker.value.onerror = () => {
     mapLoadStatus.value = 'error'
     mapStatusMessage.value = 'Marker worker failed while processing data.'
+    finishPostLoginPointsLoading('Could not load points after login.')
   }
 }
 
@@ -968,6 +1137,10 @@ const getViewportRequestKey = (viewport: {
 ].join('|')
 
 const fetchViewportClientes = async () => {
+  if (!isAuthenticated.value) {
+    return
+  }
+
   const viewport = getViewportFromMap()
   if (!viewport) {
     return
@@ -1043,6 +1216,10 @@ const fetchViewportClientes = async () => {
 }
 
 const scheduleViewportFetch = () => {
+  if (!isAuthenticated.value) {
+    return
+  }
+
   if (viewportFetchDebounceTimer.value) {
     window.clearTimeout(viewportFetchDebounceTimer.value)
   }
@@ -1120,33 +1297,90 @@ const createMap = () => {
   return true
 }
 
+const clearProtectedDashboardData = () => {
+  selectedPoligonoId.value = null
+  showPoligonosPanel.value = false
+  showVendedoresPanel.value = false
+  selectedVendedores.value = []
+  savedVendedores.value = []
+  generatedPoligonos.value = []
+  savedPoligonos.value = []
+  viewportClientes.value = []
+  pendingMarkers.value = []
+  markerColorMap.value = {}
+  lastRenderedMarkerPayloads.value = []
+  lastViewportRequestKey.value = null
+  clearSavedPolygonOverlays()
+  clearMarkerCluster()
+  clearMapMarkers()
+}
+
+watch(
+  isAuthenticated,
+  async (authenticated) => {
+    if (!authenticated) {
+      clearProtectedDashboardData()
+      finishPostLoginPointsLoading('')
+      mapStatusMessage.value = 'Login required to access points and polygons.'
+      return
+    }
+
+    mapStatusMessage.value = 'Session active. Loading points and polygons...'
+    startPostLoginPointsLoading()
+    await Promise.allSettled([loadPoligonos(), loadVendedores()])
+    globalLoadingStore.setProgress(55)
+    globalLoadingStore.setMessage('Loading points...')
+    scheduleViewportFetch()
+  },
+)
+
 onMounted(async () => {
   attachGoogleAuthFailureHandler()
   initializeMarkerWorker()
   initColoringWorker()
   initPolygonGenerationWorker()
 
+  hasResolvedInitialMapLoading.value = false
+  globalLoadingStore.begin({
+    title: 'Login',
+    message: 'Initializing map session...',
+    progress: 8,
+  })
+
   mapLoadStatus.value = 'loading'
   mapStatusMessage.value = 'Loading Google Maps script...'
+  globalLoadingStore.setProgress(24)
+  globalLoadingStore.setMessage('Loading Google Maps script...')
 
   const mapsReady = await loadGoogleMapsScript()
   if (!mapsReady) {
     mapLoadStatus.value = 'error'
     mapStatusMessage.value = 'Google Maps did not initialize in time.'
+    resolveInitialMapLoading('Could not initialize Google Maps.')
     return
   }
 
   mapStatusMessage.value = 'Rendering Google Map...'
+  globalLoadingStore.setProgress(55)
+  globalLoadingStore.setMessage('Rendering map and loading points...')
   createMap()
-  loadPoligonos()
-  loadVendedores()
+
+  if (isAuthenticated.value) {
+    loadPoligonos()
+    loadVendedores()
+  } else {
+    mapStatusMessage.value = 'Login required to access points and polygons.'
+    resolveInitialMapLoading('Map loaded. Login required to access points and polygons.')
+  }
 
   mapIdleListener.value = mapInstance.value?.addListener('idle', () => {
     traceMapFlow('map:idle')
     scheduleViewportFetch()
   }) ?? null
 
-  scheduleViewportFetch()
+  if (isAuthenticated.value) {
+    scheduleViewportFetch()
+  }
 })
 
 onBeforeUnmount(() => {
@@ -1182,6 +1416,7 @@ onBeforeUnmount(() => {
       v-if="shouldShowStatusBanner"
       class="absolute left-3 top-3 z-10 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-sm"
       :class="{
+        'border-amber-300 bg-amber-50 text-amber-800': mapLoadStatus === 'ready' && !isAuthenticated,
         'border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-muted)]': mapLoadStatus === 'loading',
         'border-emerald-300 bg-emerald-50 text-emerald-700': mapLoadStatus === 'ready',
         'border-red-300 bg-red-50 text-red-700': mapLoadStatus === 'error',
@@ -1190,7 +1425,20 @@ onBeforeUnmount(() => {
       {{ mapStatusMessage }}
     </div>
 
+    <div
+      v-if="showAuthRequiredNotice"
+      class="absolute left-1/2 top-16 z-20 w-[min(92vw,680px)] -translate-x-1/2 rounded-xl border border-amber-200 bg-amber-50/95 px-4 py-3 text-center shadow-[0_10px_30px_rgba(146,64,14,0.18)] backdrop-blur-sm"
+    >
+      <p class="m-0 text-lg font-semibold text-amber-900">
+        Sign in to access points and polygons.
+      </p>
+      <p class="mb-0 mt-1 text-md text-amber-800">
+        You can explore the map, but data panels are unlocked only after login or registration.
+      </p>
+    </div>
+
     <MapPolygonSidebar
+      v-if="isAuthenticated"
       :is-drawing-polygon="isDrawingPolygon"
       :can-save-polygon="canSavePolygon"
       :is-saving-polygon="isSavingPolygon"
@@ -1206,6 +1454,7 @@ onBeforeUnmount(() => {
       :points-per-vendor="pointsPerVendor"
       :can-generate-polygons="canGeneratePolygons"
       :is-generating-polygons="isGeneratingPolygons"
+      :selected-poligono-id="selectedPoligonoId"
       :selected-color="selectedPolygonColor"
       @toggle-drawing="togglePolygonDrawing"
       @save="saveDraftPolygon"
@@ -1214,10 +1463,25 @@ onBeforeUnmount(() => {
       @toggle-vendors-list="showVendedoresPanel = !showVendedoresPanel"
       @refresh-vendors-list="loadVendedores"
       @generate-polygons="generatePolygonsFromSelection"
+      @select-poligono="selectPoligono"
       @delete="removePoligonoById"
       @color-change="(color) => (selectedPolygonColor = color)"
       @update:selected-vendedores="(value) => (selectedVendedores = value)"
       @update:points-per-vendor="(value) => (pointsPerVendor = value)"
+    />
+
+    <FloatingPlaceSearch
+      v-if="isAuthenticated"
+      :map="mapInstance"
+      :disabled="mapLoadStatus !== 'ready'"
+      @selected="handlePlaceSelected"
+    />
+
+    <PoligonoDetailsSidebar
+      v-if="selectedPoligono"
+      :poligono="selectedPoligono"
+      @updated="handlePoligonoUpdated"
+      @close="closePoligonoDetails"
     />
 
     <div

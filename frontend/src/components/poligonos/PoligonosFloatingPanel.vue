@@ -4,11 +4,13 @@ import type { PoligonoItem } from '../../services/poligonos.service'
 defineProps<{
   loading: boolean
   deletingId: number | null
+  selectedId: number | null
   poligonos: PoligonoItem[]
 }>()
 
 const emit = defineEmits<{
   (event: 'delete', id: number): void
+  (event: 'select', id: number): void
 }>()
 
 const formatDate = (value: string) => {
@@ -39,7 +41,15 @@ const formatDate = (value: string) => {
       <li
         v-for="poligono in poligonos"
         :key="poligono.id"
-        class="w-full max-w-full min-w-0 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-2.5"
+        class="w-full max-w-full min-w-0 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-soft)]/80 cursor-pointer  p-2.5 "
+        :class="{
+          '!border-white bg-[var(--app-surface-soft)]': selectedId === poligono.id,
+        }"
+        role="button"
+        tabindex="0"
+        @click="emit('select', poligono.id)"
+        @keydown.enter.prevent="emit('select', poligono.id)"
+        @keydown.space.prevent="emit('select', poligono.id)"
       >
         <div class="flex w-full min-w-0 max-w-full items-start justify-between gap-2 overflow-hidden">
           <div class="min-w-0 flex-1">
@@ -66,7 +76,7 @@ const formatDate = (value: string) => {
               :loading="deletingId === poligono.id"
               :disabled="deletingId === poligono.id"
               :aria-label="`Delete ${poligono.nombre || `polygon ${poligono.id}`}`"
-              @click="emit('delete', poligono.id)"
+              @click.stop="emit('delete', poligono.id)"
             />
           </div>
         </div>

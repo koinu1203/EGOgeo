@@ -33,8 +33,12 @@ export type BulkPoligonoInput = {
 };
 
 export type PuntoDentroPoligono = {
+  id: number;
   cliente_id: string;
   nombre: string;
+  moneda: string;
+  importe_compras: number;
+  monto_anual: number;
   longitud: number;
   latitud: number;
 };
@@ -188,13 +192,17 @@ class PoligonosModel {
     const result = await this.query<PuntoDentroPoligono>(
       `
         SELECT
+          c.id,
           c.cliente_id,
           c.nombre,
+          c.moneda,
+          COALESCE(c.monto_anual, 0)::double precision AS importe_compras,
+          COALESCE(c.monto_anual, 0)::double precision AS monto_anual,
           ST_X(c.coordenadas) AS longitud,
           ST_Y(c.coordenadas) AS latitud
         FROM poligonos_usuario p
         JOIN clientes_ubicacion c
-          ON ST_Contains(p.area, c.coordenadas)
+          ON ST_Covers(p.area, c.coordenadas)
         WHERE p.id = $1
           AND p.usuario_id = $2
           AND (c.usuario_id = $2 OR c.usuario_id IS NULL)
